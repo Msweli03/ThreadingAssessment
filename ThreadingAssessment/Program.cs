@@ -9,120 +9,157 @@ namespace ThreadingAssessment
 {
     internal class Program
     {
+       // I created a global list to store integers and a lock object to synchronize access to this list.
         private static List<int> globalList = new List<int>();
-        private static object listLock = new object();
-        private static AutoResetEvent triggerEvenThread = new AutoResetEvent(false);
-        private static bool stopThreads = false;
+        private static readonly object listLock = new object();
+        private static AutoResetEvent startEvenThreadSignal = new AutoResetEvent(false);
+        private static bool shouldStopThreads = false;
 
         static void Main(string[] args)
         {
-            // Create and start threads
+            Console.WriteLine("Starting the program...");
+
+            // I created and started the initial threads to add odd numbers and prime numbers to the global list.
             var oddNumberThread = new Thread(AddOddNumbers);
             var primeNumberThread = new Thread(AddPrimeNumbers);
-            var evenNumberThread = new Thread(AddEvenNumbers);
+            var evenNumberThread = new Thread(AddEvenNumbers); // This thread will be started later
 
             oddNumberThread.Start();
             primeNumberThread.Start();
 
-            // Wait for the global list to reach 250,000 items to start the even number thread
-            while (true)
+            // I also set up a monitoring thread that checks the global list's size and starts the even number thread when needed.
+            var monitorThread = new Thread(() =>
             {
-                lock (listLock)
+                while (true)
                 {
-                    if (globalList.Count >= 250000)
+                    lock (listLock)
                     {
-                        triggerEvenThread.Set(); // Signal to start even number thread
-                        break;
+                        if (globalList.Count >= 250000)
+                        {
+                            Console.WriteLine("Global list reached 250,000 items. Starting the even number thread...");
+                            startEvenThreadSignal.Set(); // Signal to start the even numbers thread
+                            if (!evenNumberThread.IsAlive)
+                            {
+                                evenNumberThread.Start(); // Start the even numbers thread
+                            }
+                            break; // Exit the monitoring loop
+                        }
+
+                        // I log progress periodically to monitor how many items are in the list.
+                        if (globalList.Count % 50000 == 0 && globalList.Count > 0)
+                        {
+                            Console.WriteLine($"Progress: {globalList.Count} items in the list...");
+                        }
                     }
+                    Thread.Sleep(50); // Reduce CPU usage
                 }
-            }
+            });
 
-            evenNumberThread.Start();
+            monitorThread.Start();
 
-            // Wait until the list reaches exactly 1,000,000 items
-            while (true)
-            {
-                lock (listLock)
-                {
-                    if (globalList.Count == 1000000)
-                    {
-                        stopThreads = true; // Signal to stop all threads
-                        break;
-                    }
-                }
-            }
+            // I wait until the list reaches exactly 1,000,000 items.
+            WaitForThreshold(1000000);
 
-            // Join threads to ensure they finish execution
+            // I signal all threads to stop.
+            shouldStopThreads = true;
+
+            // I ensure all threads have completed execution.
             oddNumberThread.Join();
             primeNumberThread.Join();
             evenNumberThread.Join();
 
-            // Sort the list and count odd and even numbers
-            globalList.Sort();
-            int oddCount = globalList.Count(x => x % 2 != 0);
-            int evenCount = globalList.Count(x => x % 2 == 0);
-
-            Console.WriteLine($"Odd Numbers Count: {oddCount}");
-            Console.WriteLine($"Even Numbers Count: {evenCount}");
-
-            // Serialize the list to binary and XML files
-            SerializeList(globalList);
+            // I display the results of the operation.
+            DisplayResults();
         }
 
-        static void AddOddNumbers()
+        private static void WaitForThreshold(int threshold)
         {
-            Random rand = new Random();
-            while (!stopThreads)
+            while (true)
             {
-                int number = rand.Next(1, int.MaxValue);
-                if (number % 2 != 0)
+                lock (listLock)
+                {
+                    if (globalList.Count >= threshold)
+                    {
+                        Console.WriteLine($"Global list reached {threshold} items.");
+                        break;
+                    }
+
+                    // I log progress periodically while waiting for the threshold.
+                    if (globalList.Count % 100000 == 0 && globalList.Count > 0)
+                    {
+                        Console.WriteLine($"Waiting for {threshold} items: current count = {globalList.Count}");
+                    }
+                }
+                Thread.Sleep(50); // Reduce CPU usage
+            }
+        }
+
+        private static void AddOddNumbers()
+        {
+            Random random = new Random();
+            while (!shouldStopThreads)
+            {
+                int number = random.Next(1, int.MaxValue);
+                if (number % 2 != 0) // Check if the number is odd
                 {
                     lock (listLock)
                     {
                         if (globalList.Count < 1000000)
+                        {
                             globalList.Add(number);
+                        }
                     }
                 }
+                // Temporarily remove Thread.Sleep to increase speed
+                // Thread.Sleep(10);
             }
         }
 
-        static void AddPrimeNumbers()
+        private static void AddPrimeNumbers()
         {
-            int number = 2;
-            while (!stopThreads)
+            int number = 2; // Start with the first prime number
+            while (!shouldStopThreads)
             {
                 if (IsPrime(number))
                 {
                     lock (listLock)
                     {
                         if (globalList.Count < 1000000)
+                        {
                             globalList.Add(-number);
+                        }
                     }
                 }
                 number++;
+                // Temporarily remove Thread.Sleep to increase speed
+                // Thread.Sleep(10);
             }
         }
 
-        static void AddEvenNumbers()
+        private static void AddEvenNumbers()
         {
-            Random rand = new Random();
-            triggerEvenThread.WaitOne(); // Wait for the signal to start
+            Random random = new Random();
+            startEvenThreadSignal.WaitOne(); // Wait for the signal to start
 
-            while (!stopThreads)
+            while (!shouldStopThreads)
             {
-                int number = rand.Next(1, int.MaxValue);
-                if (number % 2 == 0)
+                int number = random.Next(1, int.MaxValue);
+                if (number % 2 == 0) // Check if the number is even
                 {
                     lock (listLock)
                     {
                         if (globalList.Count < 1000000)
+                        {
                             globalList.Add(number);
+                        }
                     }
                 }
+                // Temporarily remove Thread.Sleep to increase speed
+                // Thread.Sleep(10);
             }
         }
 
-        static bool IsPrime(int number)
+        private static bool IsPrime(int number)
         {
             if (number < 2) return false;
             for (int i = 2; i <= Math.Sqrt(number); i++)
@@ -132,12 +169,48 @@ namespace ThreadingAssessment
             return true;
         }
 
-        static void SerializeList(List<int> list)
+        private static void DisplayResults()
+        {
+            Console.WriteLine("Sorting the global list...");
+
+            lock (listLock)
+            {
+                globalList.Sort(); // Sort the list in ascending order
+            }
+
+            Console.WriteLine("Global list sorted.");
+
+            // Count the number of odd and even numbers
+            int oddCount = 0;
+            int evenCount = 0;
+
+            foreach (int number in globalList)
+            {
+                if (number % 2 == 0)
+                {
+                    evenCount++;
+                }
+                else
+                {
+                    oddCount++;
+                }
+            }
+
+            // Display the counts
+            Console.WriteLine($"Total items in the list: {globalList.Count}");
+            Console.WriteLine($"Count of odd numbers: {oddCount}");
+            Console.WriteLine($"Count of even numbers: {evenCount}");
+
+            // Serialize the list to binary and XML files
+            SerializeList(globalList);
+        }
+
+        private static void SerializeList(List<int> list)
         {
             // Serialize to binary
-            using (FileStream fs = new FileStream("globalList.bin", FileMode.Create))
+            using (var fs = new FileStream("globalList.bin", FileMode.Create))
+            using (var writer = new BinaryWriter(fs))
             {
-                BinaryWriter writer = new BinaryWriter(fs);
                 foreach (int number in list)
                 {
                     writer.Write(number);
@@ -146,7 +219,7 @@ namespace ThreadingAssessment
 
             // Serialize to XML
             XmlSerializer xmlSerializer = new XmlSerializer(typeof(List<int>));
-            using (FileStream fs = new FileStream("globalList.xml", FileMode.Create))
+            using (var fs = new FileStream("globalList.xml", FileMode.Create))
             {
                 xmlSerializer.Serialize(fs, list);
             }
